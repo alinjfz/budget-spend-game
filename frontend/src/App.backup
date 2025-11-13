@@ -1,0 +1,17 @@
+import Navbar from './components/Navbar'
+import './App.css'
+
+interface User {
+  id: string
+  role: 'A' | 'Z' | 'admin'
+}
+
+function App() {
+  return (
+    <div className="app">
+      <Navbar />
+    </div>
+  )
+}
+
+export default App

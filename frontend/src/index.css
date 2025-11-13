@@ -1,0 +1,39 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --primary-color: #2293bf;
+  --gradient-bg: radial-gradient(
+    circle,
+    rgba(34, 147, 191, 1) 0%,
+    rgba(134, 178, 178, 1) 100%
+  );
+  --text-color: #ffffff;
+  --danger-color: #ff4444;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
+    "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: var(--gradient-bg);
+  color: var(--text-color);
+  overflow: hidden;
+}
+
+input,
+button {
+  font-family: inherit;
+}
