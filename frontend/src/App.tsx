@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import axios from "axios";
 import Login from "./pages/Login";
 import Main from "./pages/Main";
+import Setup from "./pages/Setup";
 import "./App.css";
 
 interface User {
@@ -12,8 +13,17 @@ interface User {
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [setupComplete, setSetupComplete] = useState(
+    !!localStorage.getItem("apiBase")
+  );
 
   useEffect(() => {
+    // Configure axios to use the stored API base
+    const apiBase = localStorage.getItem("apiBase");
+    if (apiBase) {
+      axios.defaults.baseURL = apiBase;
+    }
+
     const checkAuth = async () => {
       try {
         const token = localStorage.getItem("token");
@@ -32,8 +42,12 @@ function App() {
       }
     };
 
-    checkAuth();
-  }, []);
+    if (setupComplete) {
+      checkAuth();
+    } else {
+      setLoading(false);
+    }
+  }, [setupComplete]);
 
   const handleLogin = (userData: User, token: string, rememberMe: boolean) => {
     localStorage.setItem("token", token);
@@ -48,6 +62,14 @@ function App() {
     localStorage.removeItem("rememberMe");
     setUser(null);
   };
+
+  const handleSetupComplete = () => {
+    setSetupComplete(true);
+  };
+
+  if (!setupComplete) {
+    return <Setup onSetupComplete={handleSetupComplete} />;
+  }
 
   if (loading) {
     return <div className="loading">Loading...</div>;

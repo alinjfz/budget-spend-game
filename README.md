@@ -5,12 +5,16 @@ A mobile-first web application for tracking two counters with real-time notifica
 ## Features
 
 - **Mobile-First Design**: Fully responsive UI optimized for iOS and mobile devices
+- **Auto-Discovery**: Automatically finds server on first use, no IP entry needed
+- **Add to Home Screen**: Works as standalone app on mobile (iOS/Android)
+- **IP-Resilient**: Survives WiFi restarts and IP changes (uses `.local` hostname)
 - **User Roles**: Support for User A, User Z, and Admin with different permissions
 - **Real-time Counters**: Live counter tracking with percentage display
 - **Notifications**: Push notifications when counters are updated
 - **Service Worker**: Offline support and background notifications
 - **Authentication**: JWT-based user authentication with "Remember Me" option
 - **Custom Theme**: Professional blue gradient theme (#2293bf)
+- **Network Ready**: Access from any device on local network
 
 ## Project Structure
 

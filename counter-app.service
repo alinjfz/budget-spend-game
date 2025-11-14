@@ -1,0 +1,29 @@
+[Unit]
+Description=Counter Tracker App - Real-time Counter Tracking
+Documentation=file:///home/a/ghahrApp/RASPBERRY_PI_SETUP.md
+After=network.target
+
+[Service]
+Type=simple
+User=a
+Group=a
+WorkingDirectory=/home/a/ghahrApp/backend
+Environment="PATH=/home/a/ghahrApp/backend/venv/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/a/ghahrApp/backend/venv/bin/python3 main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=counter-app
+
+# Performance tuning
+Nice=0
+CPUQuota=50%
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -3,6 +3,7 @@ Counter Tracker API - Enhanced Backend with State Management
 """
 from fastapi import FastAPI, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from datetime import datetime, timedelta
 from typing import Optional
@@ -40,12 +41,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Import APIRouter for organizing endpoints
+from fastapi import APIRouter
+api_router = APIRouter(prefix="/api")
+
 # Configuration
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# Game State Management with File Persistence
+# Load user credentials from environment
+USERS = {
+    "A": {"password": os.getenv("USER_A_PASSWORD", "password"), "role": "A"},
+    "Z": {"password": os.getenv("USER_Z_PASSWORD", "password"), "role": "Z"},
+    "admin": {"password": os.getenv("ADMIN_PASSWORD", "password"), "role": "admin"}
+}
 class GameState(BaseModel):
     counter_a: int
     counter_z: int
@@ -91,13 +101,6 @@ def save_game_state(state: GameState):
 
 # Load initial game state
 game_state = load_game_state()
-
-# User credentials (demo)
-USERS = {
-    "A": {"password": "password", "role": "A"},
-    "Z": {"password": "password", "role": "Z"},
-    "admin": {"password": "password", "role": "admin"}
-}
 
 # Schemas
 class LoginRequest(BaseModel):
@@ -167,19 +170,11 @@ def get_current_user(authorization: Optional[str] = None):
     }
 
 # Routes
-@app.get("/")
-async def root():
-    return {
-        "message": "Counter Tracker API",
-        "version": "1.0.0",
-        "docs": "/docs"
-    }
-
-@app.get("/health")
+@api_router.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
-@app.post("/auth/login", response_model=LoginResponse)
+@api_router.post("/auth/login", response_model=LoginResponse)
 async def login(request: LoginRequest):
     """User login endpoint"""
     user = USERS.get(request.username)
@@ -205,17 +200,17 @@ async def login(request: LoginRequest):
         "token": access_token
     }
 
-@app.get("/auth/me")
+@api_router.get("/auth/me")
 async def get_me(authorization: str = Header(None)):
     user = get_current_user(authorization)
     return user
 
-@app.get("/game/state", response_model=GameState)
+@api_router.get("/game/state", response_model=GameState)
 async def get_game_state(authorization: str = Header(None)):
     user = get_current_user(authorization)
     return game_state
 
-@app.post("/game/update", response_model=GameResponse)
+@api_router.post("/game/update", response_model=GameResponse)
 async def update_game(request: UpdateRequest, authorization: str = Header(None)):
     """Update counter based on user role"""
     global game_state
@@ -294,7 +289,7 @@ async def update_game(request: UpdateRequest, authorization: str = Header(None))
         timestamp=datetime.utcnow().isoformat()
     )
 
-@app.post("/game/reset", response_model=GameState)
+@api_router.post("/game/reset", response_model=GameState)
 async def reset_game(authorization: str = Header(None)):
     """Reset game state (admin only)"""
     global game_state
@@ -320,6 +315,17 @@ async def reset_game(authorization: str = Header(None)):
     save_game_state(game_state)
     logger.info(f"Game reset by admin {user['id']}")
     return game_state
+
+# Include API router BEFORE mounting static files
+app.include_router(api_router)
+
+# Mount frontend static files (must be last)
+frontend_dist_path = Path(__file__).parent.parent / "frontend" / "dist"
+if frontend_dist_path.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist_path), html=True), name="frontend")
+    logger.info(f"Frontend mounted from {frontend_dist_path}")
+else:
+    logger.warning(f"Frontend dist folder not found at {frontend_dist_path}")
 
 if __name__ == "__main__":
     import uvicorn
