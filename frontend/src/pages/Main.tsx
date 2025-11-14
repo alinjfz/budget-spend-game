@@ -154,10 +154,14 @@ export default function Main({ user, onLogout }: MainProps) {
     // Check if notifications are supported
     if (!("Notification" in window)) {
       console.log("❌ Browser does not support notifications");
+      setError("Your browser does not support notifications");
       return;
     }
 
     console.log("🔔 Current notification permission:", Notification.permission);
+    console.log("🌐 Current protocol:", window.location.protocol);
+    console.log("🌐 Current hostname:", window.location.hostname);
+    console.log("🔒 Is secure context:", window.isSecureContext);
 
     // If already granted, show confirmation
     if (Notification.permission === "granted") {
@@ -182,9 +186,24 @@ export default function Main({ user, onLogout }: MainProps) {
     if (Notification.permission === "denied") {
       console.log("❌ Notifications denied by user");
       setNotificationPermission("denied");
-      setError(
-        "Notifications are disabled. Allow them in browser settings to get alerts."
-      );
+
+      // Check if running on HTTPS or localhost
+      const isSecure =
+        window.location.protocol === "https:" ||
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1";
+      const domain = window.location.hostname;
+
+      let errorMsg = "Notifications are disabled. ";
+      if (!isSecure && !domain.includes(".local")) {
+        errorMsg +=
+          "For notifications to work, use HTTPS or access via localhost/raspberrypi.local";
+      } else {
+        errorMsg +=
+          "Go to Settings → Safari → " + domain + " → Notifications → Allow";
+      }
+
+      setError(errorMsg);
       return;
     }
 

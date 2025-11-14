@@ -329,9 +329,30 @@ else:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_level="info"
-    )
+    
+    # Check if SSL certificates exist for HTTPS
+    cert_path = Path(__file__).parent / "cert.pem"
+    key_path = Path(__file__).parent / "key.pem"
+    
+    use_https = cert_path.exists() and key_path.exists()
+    
+    if use_https:
+        logger.info("🔒 Starting server with HTTPS (SSL/TLS)")
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=8000,
+            log_level="info",
+            ssl_certfile=str(cert_path),
+            ssl_keyfile=str(key_path)
+        )
+    else:
+        logger.warning("⚠️ No SSL certificates found. Starting with HTTP (insecure)")
+        logger.info("To enable HTTPS, create SSL certificates:")
+        logger.info("  openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365")
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=8000,
+            log_level="info"
+        )

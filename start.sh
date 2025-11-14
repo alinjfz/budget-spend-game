@@ -57,9 +57,13 @@ echo "📝 Backend logs: $BACKEND_DIR/backend.log"
 # Give backend time to start
 sleep 2
 
-# Test backend
-if curl -s http://localhost:8000/health > /dev/null; then
-    echo -e "${GREEN}✅ Backend health check passed${NC}"
+# Test backend (try HTTPS first, then HTTP)
+if curl -s --insecure https://localhost:8000/api/health > /dev/null 2>&1; then
+    echo -e "${GREEN}✅ Backend health check passed (HTTPS)${NC}"
+    PROTOCOL="https"
+elif curl -s http://localhost:8000/api/health > /dev/null 2>&1; then
+    echo -e "${GREEN}✅ Backend health check passed (HTTP)${NC}"
+    PROTOCOL="http"
 else
     echo -e "${RED}❌ Backend health check failed${NC}"
     echo "Check logs: cat $BACKEND_DIR/backend.log"
@@ -71,9 +75,16 @@ echo ""
 echo -e "${GREEN}🎉 Application Ready!${NC}"
 echo ""
 echo "📱 Access from your network:"
-PI_IP=$(hostname -I | awk '{print $1}')
-echo -e "  ${YELLOW}http://$PI_IP:8000${NC}"
-echo -e "  ${YELLOW}http://raspberrypi.local:8000${NC}"
+PI_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "YOUR_IP")
+if [ "$PROTOCOL" = "https" ]; then
+    echo -e "  ${YELLOW}https://$PI_IP:8000${NC} (⚠️ self-signed certificate)"
+    echo -e "  ${YELLOW}https://raspberrypi.local:8000${NC} (⚠️ self-signed certificate)"
+    echo ""
+    echo "🔒 HTTPS is enabled (secure PWA with notifications)"
+else
+    echo -e "  ${YELLOW}http://$PI_IP:8000${NC}"
+    echo -e "  ${YELLOW}http://raspberrypi.local:8000${NC}"
+fi
 echo ""
 echo "🔐 Login with credentials from backend/.env"
 echo ""

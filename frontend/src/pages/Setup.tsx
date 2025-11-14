@@ -20,8 +20,26 @@ export default function Setup({ onSetupComplete }: SetupProps) {
     setError("");
 
     try {
-      // Try localhost first (development)
-      const response = await fetch("http://localhost:8000/health", {
+      // Try HTTPS localhost first (development with SSL)
+      const response = await fetch("https://localhost:8000/api/health", {
+        method: "GET",
+        mode: "no-cors",
+      });
+
+      if (response.ok || response.status === 0) {
+        // Found at localhost with HTTPS
+        localStorage.setItem("apiBase", "https://localhost:8000");
+        setFound(true);
+        setTimeout(() => onSetupComplete(), 1000);
+        return;
+      }
+    } catch (err) {
+      // HTTPS not available, try HTTP
+    }
+
+    try {
+      // Try HTTP localhost (fallback)
+      const response = await fetch("http://localhost:8000/api/health", {
         method: "GET",
         mode: "no-cors",
       });
@@ -37,9 +55,29 @@ export default function Setup({ onSetupComplete }: SetupProps) {
       // localhost not found, try .local
     }
 
-    // Try raspberrypi.local
+    // Try HTTPS raspberrypi.local
     try {
-      const response = await fetch("http://raspberrypi.local:8000/health", {
+      const response = await fetch(
+        "https://raspberrypi.local:8000/api/health",
+        {
+          method: "GET",
+          mode: "no-cors",
+        }
+      );
+
+      if (response.ok || response.status === 0) {
+        localStorage.setItem("apiBase", "https://raspberrypi.local:8000");
+        setFound(true);
+        setTimeout(() => onSetupComplete(), 1000);
+        return;
+      }
+    } catch (err) {
+      // HTTPS not available, try HTTP
+    }
+
+    // Try HTTP raspberrypi.local (fallback)
+    try {
+      const response = await fetch("http://raspberrypi.local:8000/api/health", {
         method: "GET",
         mode: "no-cors",
       });
@@ -65,13 +103,15 @@ export default function Setup({ onSetupComplete }: SetupProps) {
     const formData = new FormData(e.currentTarget);
     const ip = formData.get("ip") as string;
     const port = formData.get("port") as string;
+    const useHttps = (formData.get("protocol") as string) === "https";
 
     if (!ip) {
       setError("Please enter server IP or hostname");
       return;
     }
 
-    const apiBase = `http://${ip}:${port || 8000}`;
+    const protocol = useHttps ? "https" : "http";
+    const apiBase = `${protocol}://${ip}:${port || 8000}`;
     localStorage.setItem("apiBase", apiBase);
     setFound(true);
     setTimeout(() => onSetupComplete(), 1000);
@@ -138,6 +178,17 @@ export default function Setup({ onSetupComplete }: SetupProps) {
                   min="1"
                   max="65535"
                 />
+              </div>
+
+              <div className="form-group">
+                <label>
+                  Protocol
+                  <span className="hint">(HTTPS is more secure)</span>
+                </label>
+                <select name="protocol" defaultValue="https">
+                  <option value="https">HTTPS (Secure)</option>
+                  <option value="http">HTTP (Insecure)</option>
+                </select>
               </div>
 
               <button type="submit" className="btn-setup">
