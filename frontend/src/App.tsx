@@ -18,6 +18,14 @@ function App() {
   );
 
   useEffect(() => {
+    // Request notification permission on app start
+    if ("Notification" in window && Notification.permission === "default") {
+      console.log("📢 Requesting notification permission from App level...");
+      Notification.requestPermission().then((permission) => {
+        console.log("🎯 Notification permission from App:", permission);
+      });
+    }
+
     // Configure axios to use the stored API base
     const apiBase = localStorage.getItem("apiBase");
     if (apiBase) {
