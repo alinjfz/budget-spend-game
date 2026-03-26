@@ -1,18 +1,37 @@
+# Dependencies
 node_modules/
+venv/
+env/
+ENV/
+.venv
+
+# Build output
 dist/
 build/
-.DS_Store
-*.log
+
+# Environment & secrets
 .env
 .env.local
+
+# Runtime data
+backend/game_state.json
+backend/backend.log
+backend/.pid
+
+# TLS certificates (generate your own)
+*.pem
+*.crt
+*.key
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.egg-info/
+*.egg
 .Python
-build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -24,11 +43,10 @@ var/
 wheels/
 pip-wheel-metadata/
 share/python-wheels/
-*.egg-info/
 .installed.cfg
-*.egg
 MANIFEST
-venv/
-ENV/
-env/
-.venv
+
+# OS
+.DS_Store
+*.log
+*.backup

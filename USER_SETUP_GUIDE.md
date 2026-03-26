@@ -1,195 +1,44 @@
-# User-Friendly Setup Guide
+# User Setup Guide
 
-## For Users (Non-Technical)
+This guide is for people using the app, not setting it up.
 
-### First Time Setup
+## First-time setup
 
-1. **Open the app** on your phone/tablet
-2. **You'll see a setup screen** - Don't worry, this is automatic! 👍
-3. **The app will search** for the Raspberry Pi (takes a few seconds)
-4. **If it finds it**, great! It shows "Connected!" and moves forward
-5. **If not found**, enter the details:
-   - **Server Hostname:** `raspberrypi.local` (just leave as is)
-   - **Port:** `8000` (just leave as is)
-   - Click **Connect**
+1. Open the link your admin gave you (e.g. `http://raspberrypi.local:8000`) in your browser
+2. You'll see a brief "Searching for server..." screen — this is normal and only happens once
+3. Once connected, you'll be taken to the login page
+4. Log in with the username and password your admin provided
 
-### Add to Home Screen (Bookmark)
+The app remembers the server after the first connection, so you won't see the setup screen again.
 
-**On iPhone/iPad:**
+## Add to home screen
 
+**iPhone / iPad (Safari):**
 1. Open the app URL in Safari
-2. Tap the **Share** button (arrow pointing up)
-3. Tap **Add to Home Screen**
-4. Tap **Add**
+2. Tap the Share button (box with arrow pointing up)
+3. Tap "Add to Home Screen"
+4. Tap "Add"
 
-**On Android:**
-
+**Android (Chrome):**
 1. Open the app URL in Chrome
-2. Tap the **Menu** button (three dots)
-3. Tap **Install app** or **Add to Home Screen**
-4. Tap **Install**
+2. Tap the three-dot menu
+3. Tap "Install app" or "Add to Home Screen"
 
-**On Desktop:**
+After adding to your home screen, the app opens in full-screen without the browser UI — similar to a native app. It also works offline once cached.
 
-- Just bookmark it normally (Ctrl+D or Cmd+D)
+## If the app stops working
 
-### That's It! ✅
-
-After first setup, the app will:
-
-- ✅ Remember the server location
-- ✅ Work even if WiFi disconnects and reconnects
-- ✅ Work even if Raspberry Pi gets a new IP address
-- ✅ Load instantly from home screen
-
-### Troubleshooting
-
-**"Could not find server"**
-
-- Make sure Raspberry Pi is powered on
-- Make sure it's running the app (ask admin)
-- Make sure your phone/tablet is on the **same WiFi** as the Pi
-- Try entering the details manually:
-  - Hostname: `raspberrypi.local`
-  - Port: `8000`
-
-**"Connection refused"**
-
-- The Raspberry Pi might be restarting
-- Wait 30 seconds and try again
-
-**Still doesn't work?**
-
-- Ask the person who set up the Raspberry Pi for help
-
----
-
-## For Admin/Setup Person
-
-### What's New?
-
-Users no longer need to:
-
-- ❌ Know the IP address
-- ❌ Manually type server details
-- ❌ Change anything if WiFi IP changes
-
-### How It Works
-
-1. **First visit:** Setup page auto-detects server or asks for hostname
-2. **After setup:** Server location saved to browser (never changes)
-3. **WiFi reset:** `.local` hostname works across IP changes
-4. **Bookmarked:** Users just tap icon, app works
-
-### User Experience Flow
-
-```
-First Visit (New User)
-    ↓
-Setup Page Appears
-    ↓
-Auto-detect or manual entry
-    ↓
-Server details saved to browser
-    ↓
-User can now bookmark/add to home screen
-    ↓
-Future visits always work automatically!
-```
-
-### IP Change Scenario
-
-```
-WiFi resets, Pi gets new IP:
-  Old IP: 192.168.1.100
-  New IP: 192.168.1.105
-
-User bookmarked: raspberrypi.local:8000
-    ↓
-.local hostname resolves to new IP (192.168.1.105)
-    ↓
-App works perfectly! No user action needed.
-```
-
-### Testing
-
-Test with multiple devices:
-
-```bash
-# On each device:
-1. Open app in browser: http://raspberrypi.local:8000
-2. Setup page appears
-3. Auto-detects server (or you enter hostname)
-4. Can login and use app
-5. Add to home screen
-6. Close and reopen from home screen - works!
-```
-
-### If Auto-Detect Fails
-
-Users see the manual entry form. They should enter:
-
-- **Hostname:** `raspberrypi.local` (most important!)
-- **Port:** `8000`
-
-The `.local` hostname works across IP changes, so this setup survives WiFi resets.
-
----
-
-## Technical Details
-
-### Storage Location
-
-Server settings saved in browser's `localStorage`:
-
-```
-Key: "apiBase"
-Value: "http://raspberrypi.local:8000"
-```
-
-This persists even after:
-
-- Browser closes/reopens
-- Device restarts
-- WiFi changes
-
-### Auto-Detection Logic
-
-On first load, tries to connect to:
-
-1. `http://localhost:8000` (development/same device)
-2. `http://raspberrypi.local:8000` (production/network)
-
-If found, saves and proceeds. If not, shows manual entry form.
-
-### Manual Entry
-
-If neither works, user can enter custom hostname or IP:
-
-- `raspberrypi.local` (recommended)
-- `raspberrypi` (hostname only, port auto-added)
-- `192.168.1.100` (IP address)
-
----
+- Make sure your device is on the same WiFi as the server
+- The server (Raspberry Pi) might be off — ask your admin
+- If you recently changed WiFi networks, the `.local` hostname should still work. If not, try opening the app in the browser first before using the home screen shortcut
 
 ## FAQ
 
-**Q: What if I want to change the server?**
-A: Users can clear browser cache or open dev tools and clear localStorage. Or ask admin to reset their device.
+**Do I need to enter the server address every time?**
+No. It's saved in your browser after the first connection.
 
-**Q: Does this work offline?**
-A: No, the app needs network access to the Raspberry Pi. But app will remember the server even after offline periods.
+**Does it work offline?**
+The UI loads from cache when offline, but you can't update counters without a connection to the server.
 
-**Q: What about security?**
-A: Server location is not sensitive info (it's just a hostname on local network). Real security is the password login.
-
-**Q: Can users share their bookmark?**
-A: Yes! If they're on the same network, bookmark works for everyone (as long as they have login credentials).
-
----
-
-## Sharing with Users
-
-Tell them:
-
-> "Open the app once, it'll ask for server details (we'll help if needed). Then add it to your home screen. After that, just tap the icon - it always works, even if our WiFi acts weird!"
+**I cleared my browser data and now it asks for setup again**
+That's expected — clearing browser data removes the saved server address. Just go through the setup once more.

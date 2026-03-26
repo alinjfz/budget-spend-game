@@ -1,386 +1,194 @@
-# Counter Tracker - Project Summary
+# Architecture
 
-## Project Overview
+## System overview
 
-**Counter Tracker** is a mobile-first web application for real-time counter tracking with user roles and notifications. Built with modern technologies for optimal performance and iOS PWA compatibility.
-
-## ✨ Key Features Implemented
-
-### 1. **Authentication System**
-
-- JWT-based authentication
-- Three user roles: A, Z, Admin
-- Remember me functionality
-- Secure password handling
-
-### 2. **Counter Management**
-
-- Two independent counters (A and Z)
-- Real-time updates
-- Percentage-based progress display
-- Game over detection
-- User-specific permissions
-
-### 3. **User Roles & Permissions**
-
-| User      | Permissions                       |
-| --------- | --------------------------------- |
-| **A**     | Modify left counter only          |
-| **Z**     | Modify right counter only         |
-| **Admin** | Modify both counters + reset game |
-
-### 4. **Mobile-First Design**
-
-- Fully responsive layout
-- Touch-optimized buttons (44x44px)
-- iOS safe area support
-- Optimized for all screen sizes
-- Landscape and portrait modes
-
-### 5. **Real-Time Notifications**
-
-- Counter change notifications
-- Game over alerts
-- Push notification support
-- Service worker integration
-
-### 6. **Offline Support**
-
-- Service worker caching
-- Offline page fallback
-- Background sync ready
-- Persistent notifications
-
-### 7. **Custom Theme**
-
-- Primary Color: `#2293bf`
-- Gradient: `radial-gradient(circle, rgba(34, 147, 191, 1) 0%, rgba(134, 178, 178, 1) 100%)`
-- Smooth animations
-- Professional UI
-
-## 📁 Project Structure
+Counter Tracker is a single-server application. The Python FastAPI backend handles authentication, game logic, state persistence, and serves the compiled React frontend as static files — all on port 8000. No separate web server or reverse proxy is required.
 
 ```
-ghahrApp/
-├── .github/
-│   └── copilot-instructions.md    # Project guidelines
-├── frontend/                       # React + TypeScript + Vite
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── Counter.tsx        # Counter display & controls
-│   │   │   └── Counter.css        # Counter styling
-│   │   ├── pages/
-│   │   │   ├── Login.tsx          # Login page
-│   │   │   ├── Login.css
-│   │   │   ├── Main.tsx           # Main game page
-│   │   │   └── Main.css
-│   │   ├── services/              # API services (extensible)
-│   │   ├── App.tsx                # Root component
-│   │   ├── App.css
-│   │   ├── main.tsx               # Entry point
-│   │   ├── index.css              # Global styles
-│   │   └── App.backup             # Backup component
-│   ├── public/
-│   │   └── sw.js                  # Service Worker
-│   ├── package.json               # Frontend dependencies
-│   ├── vite.config.ts            # Vite configuration
-│   ├── tsconfig.json             # TypeScript config
-│   ├── tsconfig.node.json
-│   └── index.html
-├── backend/                        # Python FastAPI
-│   ├── main.py                    # FastAPI application
-│   ├── requirements.txt           # Python dependencies
-│   └── .env                       # Environment variables
-├── .gitignore                     # Git ignore rules
-├── package.json                   # Root package.json
-├── README.md                      # Main documentation
-├── QUICKSTART.md                  # Quick start guide
-├── DEPLOYMENT.md                  # Deployment guide
-├── IOS_PWA.md                     # iOS PWA configuration
-└── [this file]
-
+Any device on the network
+        │
+        │  HTTP or HTTPS (auto-detected)
+        ▼
+FastAPI — port 8000
+  ├── /api/*              REST endpoints (auth + game)
+  └── /*                  React SPA (served from frontend/dist/)
 ```
 
-## 🚀 Quick Start
+### Why single-port?
 
-### Prerequisites
+On a Raspberry Pi with limited resources, running one process instead of two (backend + nginx) simplifies deployment and reduces memory use. FastAPI's `StaticFiles` mount handles the frontend with minimal overhead.
 
-- Node.js 18+
-- Python 3.8+
-- npm or yarn
+---
 
-### Installation
+## Authentication
 
-1. **Clone the repository**
+JWT-based, stateless. Implementation: `PyJWT`, algorithm `HS256`.
 
-```bash
-cd /Users/ali/Desktop/Codes/ghahrApp
+**Login flow:**
+1. Client sends `POST /api/auth/login` with `{ username, password }`
+2. Server looks up the user from the `USERS` dict (populated from `.env` on startup)
+3. If credentials match, server signs a JWT containing `{ sub: username, exp: now + 30min }`
+4. Client stores token in `localStorage` and sends it as `Authorization: Bearer <token>` on every request
+
+**Token validation:**
+Every protected endpoint calls `get_current_user(authorization)`, which:
+- Splits the `Authorization` header into `scheme` + `token`
+- Calls `jwt.decode()` — raises `ExpiredSignatureError` or `InvalidTokenError` on failure
+- Returns `{ id, role }` extracted from the decoded payload
+
+The role is read from the token payload on every request, not from a session store. This makes the system stateless and horizontally scalable (though not needed at Pi scale).
+
+---
+
+## Role-based access control
+
+Roles: `A`, `Z`, `admin`.
+
+RBAC is enforced inside the `POST /api/game/update` handler, not just at the route level:
+
+```python
+if user["role"] == "A":
+    # Can only write to counter_a
+    game_state.counter_a = clamp(new_value, 0, max_value)
+
+elif user["role"] == "Z":
+    # Can only write to counter_z
+    game_state.counter_z = clamp(new_value, 0, max_value)
+
+elif user["role"] == "admin":
+    # Uses request.counter ("a" or "z") to determine target
 ```
 
-2. **Install dependencies**
+A valid User A token physically cannot update `counter_z` — the server ignores any client-side attempt. This is the correct place to enforce permissions (in the handler), not on the client.
 
-```bash
-# Backend
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+---
 
-# Frontend
-cd ../frontend
-npm install
+## State management
+
+**In memory:** Game state is a Pydantic `GameState` model held as a module-level global. Python's GIL ensures single-writer safety under Uvicorn's default single-worker setup.
+
+**On disk:** After every write, `save_game_state()` serializes the model to `game_state.json`. On startup, `load_game_state()` reads it back. This gives crash-safe persistence without a database.
+
+```python
+class GameState(BaseModel):
+    counter_a: int
+    counter_z: int
+    max_value: int = 100
+    game_over: bool = False
+    last_updated: Optional[str] = None
+    last_updated_by: Optional[str] = None
 ```
 
-3. **Run the application**
+**Game-over condition:** When a counter reaches 0, `game_over` is set to `True` and a notification string is returned in the response. The frontend reads this field to show the end-of-game state.
 
-```bash
-# Terminal 1 - Backend
-cd backend
-source venv/bin/activate
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+**Limitation:** Multiple Uvicorn workers would split state across processes. For this use case (single Pi, small number of users), one worker is correct. A Redis or database backend would be needed for multi-worker deployments.
 
-# Terminal 2 - Frontend
-cd frontend
-npm run dev
+---
+
+## TLS / HTTPS
+
+At startup, `main.py` checks for `cert.pem` and `key.pem` in the backend directory:
+
+```python
+use_https = cert_path.exists() and key_path.exists()
+
+if use_https:
+    uvicorn.run(app, ssl_certfile=cert_path, ssl_keyfile=key_path, ...)
+else:
+    uvicorn.run(app, ...)  # HTTP fallback
 ```
 
-4. **Access the app**
+This means HTTPS is opt-in: generate certs and the server automatically upgrades. The same code path handles both environments. The certificates are gitignored — each deployment generates its own.
 
-- Frontend: http://localhost:5173
-- Backend API: http://localhost:8000
-- API Documentation: http://localhost:8000/docs
+---
 
-## 👤 Demo Credentials
+## Frontend: server auto-discovery
 
-```
-User A:
-  Username: A
-  Password: password
-  Permissions: Modify left counter
+On first launch (when `localStorage["apiBase"]` is empty), the `Setup` component probes a list of candidate URLs in order:
 
-User Z:
-  Username: Z
-  Password: password
-  Permissions: Modify right counter
+1. `https://localhost:8000` — local dev with SSL
+2. `http://localhost:8000` — local dev without SSL
+3. `https://raspberrypi.local:8000` — Pi with SSL
+4. `http://raspberrypi.local:8000` — Pi without SSL
 
-Admin:
-  Username: admin
-  Password: password
-  Permissions: Modify both counters + reset game
-```
+Each probe hits `/api/health`. The first successful response wins, and the base URL is saved to `localStorage`. From that point on, `axios.defaults.baseURL` is set at app startup and Setup is skipped.
 
-## 🔧 Technology Stack
+This means users on different devices (laptop, iPhone) each auto-find the server once, then never think about it again.
 
-### Frontend
+---
 
-- **Framework**: React 18
-- **Language**: TypeScript
-- **Build Tool**: Vite
-- **Styling**: CSS3 with Flexbox/Grid
-- **HTTP Client**: Axios
-- **Package Manager**: npm
+## Frontend: app state machine
 
-### Backend
-
-- **Framework**: FastAPI
-- **Language**: Python 3.8+
-- **Authentication**: JWT (PyJWT)
-- **Server**: Uvicorn
-- **Environment**: python-dotenv
-
-### Features
-
-- **Notifications**: Service Worker Push API
-- **Offline**: Service Worker Cache API
-- **Storage**: localStorage, IndexedDB ready
-- **PWA**: Full PWA capabilities for iOS
-
-## 📱 Mobile & iOS Support
-
-### PWA Installation on iOS
-
-1. Open app in Safari
-2. Tap Share button
-3. Select "Add to Home Screen"
-4. App works standalone with full-screen mode
-
-### Features
-
-- Safe area support (notch)
-- Status bar configuration
-- Offline functionality
-- Push notifications
-- Touch-optimized UI
-
-## 🎨 Design System
-
-### Color Palette
+`App.tsx` manages three states:
 
 ```
-Primary:      #2293bf
-Secondary:    #86b2b2
-Success:      #4caf50
-Danger:       #ff4444
-Background:   Gradient (blue to teal)
-Text:         #ffffff (light), #333333 (dark)
+  setupNeeded (no apiBase in localStorage)
+       │
+       ▼ server found
+  loggedOut (no valid token)
+       │
+       ▼ login
+  loggedIn → polling /game/state on interval
 ```
 
-### Typography
+There is no React Router. Page transitions are controlled by React state (`setupComplete`, `user`). This keeps the bundle small and avoids client-side routing complexity for a three-page app.
 
-- System font stack for native feel
-- Responsive font sizes
-- Font weights: 400, 600, 700, 900
+---
 
-### Components
+## PWA and Service Worker
 
-- Login Card
-- Counter Display
-- Progress Bar
-- Control Buttons
-- Notification Banners
+`public/sw.js` caches the app shell (HTML, CSS, JS) using a cache-first strategy. This enables:
+- Offline UI load (cached resources served from browser cache)
+- Faster repeat loads on slow networks (LAN or tunnel)
+- "Add to Home Screen" on iOS Safari and Android Chrome
 
-## 🔐 Security Features
+In production, the service worker is registered by `main.tsx`. It intercepts network requests and serves cached responses when offline.
 
-✅ **Implemented**
+**iOS caveat:** Push notifications from a server require HTTPS. Client-side notifications (triggered locally) work over HTTP.
 
-- JWT authentication
-- Secure password handling
-- CORS configuration
-- Role-based access control
-- Input validation
+---
 
-⚠️ **Recommendations for Production**
+## Deployment topology
 
-- Change SECRET_KEY
-- Enable HTTPS/SSL
-- Use environment-specific configs
-- Implement rate limiting
-- Add request logging
-- Use secure database
-- Enable security headers
+### Local network (default)
 
-## 📊 API Endpoints
-
-### Authentication
-
-- `POST /auth/login` - User login
-- `GET /auth/me` - Get current user
-- `GET /health` - Health check
-
-### Game
-
-- `GET /game/state` - Get current game state
-- `POST /game/update` - Update counter (delta)
-- `POST /game/reset` - Reset game (admin only)
-
-## 🧪 Testing
-
-### Manual Testing
-
-1. Login with each user type
-2. Test counter increment/decrement
-3. Verify permissions per role
-4. Test game over scenario
-5. Test notifications
-6. Test offline mode
-7. Test on mobile device
-
-### Browser Support
-
-- Chrome/Edge 90+
-- Firefox 88+
-- Safari 15+ (including iOS Safari)
-
-## 🚢 Deployment
-
-See `DEPLOYMENT.md` for detailed instructions on:
-
-- Local development
-- Docker deployment
-- Cloud platforms (Railway, Heroku, Vercel)
-- Production considerations
-- Performance optimization
-
-## 📚 Documentation
-
-- **README.md** - Full project documentation
-- **QUICKSTART.md** - Get started in 5 minutes
-- **DEPLOYMENT.md** - Deployment guide
-- **IOS_PWA.md** - iOS PWA configuration
-- **ARCHITECTURE.md** - (Can be created) System architecture
-
-## 🐛 Known Limitations
-
-1. **Admin Counter Selection**: Admin currently updates Counter A by default
-2. **State Persistence**: Game state resets on server restart
-3. **Notifications**: Limited to client-side in current version
-4. **Storage**: 5MB limit on mobile (IndexedDB recommended)
-
-## 🚧 Future Enhancements
-
-- [ ] WebSocket for real-time sync
-- [ ] Database persistence (PostgreSQL/MongoDB)
-- [ ] User profiles and statistics
-- [ ] Leaderboard
-- [ ] Sound effects
-- [ ] Animations
-- [ ] Dark mode
-- [ ] Multi-language support
-- [ ] Server-side push notifications
-- [ ] Admin dashboard
-- [ ] Game history
-- [ ] Elo rating system
-
-## 📞 Support & Troubleshooting
-
-### Common Issues
-
-**Port Already in Use**
-
-```bash
-lsof -i :8000  # Find process
-kill -9 <PID>  # Kill process
+```
+WiFi router
+  ├── Raspberry Pi  →  raspberrypi.local:8000  (mDNS)
+  ├── iPhone A
+  ├── Phone Z
+  └── Laptop (admin)
 ```
 
-**Module Not Found**
+mDNS (Bonjour on macOS/iOS, Avahi on Linux) resolves `raspberrypi.local` to the Pi's current IP. This survives IP changes from DHCP renewals.
 
-```bash
-npm install  # Frontend
-pip install -r requirements.txt  # Backend
+### Global access (optional)
+
+```
+Internet
+  └── Cloudflare Tunnel ─── Pi:8000
+         (or Tailscale, ngrok)
 ```
 
-**CORS Errors**
+No inbound firewall rule or static IP required. The Pi opens an outbound connection to the tunnel provider, which proxies external traffic in.
 
-- Check backend is running
-- Verify proxy in vite.config.ts
+### systemd service
 
-**Service Worker Not Registering**
+`counter-app.service` runs the backend as a non-root user with:
+- `Restart=on-failure` — recovers from crashes without intervention
+- `PrivateTmp=true` — isolated `/tmp`
+- `NoNewPrivileges=true` — process cannot gain elevated privileges
+- Output to journald for structured log querying
 
-- Use HTTPS in production
-- Check browser console
-- Clear cache
+---
 
-### Debug Mode
+## Security notes
 
-```bash
-# Backend with verbose logging
-uvicorn main:app --reload --log-level debug
-
-# Frontend DevTools
-F12 > Console/Network tabs
-```
-
-## 📄 License
-
-[Add your license here]
-
-## 👨‍💻 Contributors
-
-Created with ❤️ using modern web technologies.
-
-## 🙏 Acknowledgments
-
-- React ecosystem
-- FastAPI framework
-- Service Worker API
-- iOS PWA community
+| Area | Current approach | Production hardening |
+|------|-----------------|---------------------|
+| Passwords | Plaintext in `.env` | Hash with bcrypt |
+| JWT secret | Loaded from env | Rotate regularly |
+| CORS | `allow_origins=["*"]` (dev) | Lock to specific origins |
+| TLS | Self-signed cert | Use Let's Encrypt via Caddy or nginx |
+| State isolation | Module-level global | Redis for multi-worker |
+| Auth storage | `localStorage` | `httpOnly` cookie |
