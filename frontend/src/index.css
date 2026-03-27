@@ -5,14 +5,18 @@
 }
 
 :root {
-  --primary-color: #2293bf;
-  --gradient-bg: radial-gradient(
-    circle,
-    rgba(34, 147, 191, 1) 0%,
-    rgba(134, 178, 178, 1) 100%
-  );
-  --text-color: #ffffff;
-  --danger-color: #ff4444;
+  --player-a: #f43f5e;
+  --player-z: #8b5cf6;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --text: #f1f5f9;
+  --text-muted: rgba(241, 245, 249, 0.45);
+  --card-bg: rgba(255, 255, 255, 0.04);
+  --card-border: rgba(255, 255, 255, 0.09);
+  --gradient-bg: linear-gradient(160deg, #0f0c1d 0%, #1a1333 50%, #0d1b2a 100%);
+  /* kept for Login.css compatibility */
+  --primary-color: #8b5cf6;
 }
 
 html,
@@ -29,8 +33,7 @@ body,
 
 body {
   background: var(--gradient-bg);
-  color: var(--text-color);
-  overflow: hidden;
+  color: var(--text);
 }
 
 input,

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import Counter from "../components/Counter";
+import SpendCard from "../components/Counter";
 import "./Main.css";
 
 interface User {
@@ -8,11 +8,22 @@ interface User {
   role: "A" | "Z" | "admin";
 }
 
+interface Transaction {
+  player: string;
+  amount: number;
+  description: string;
+  timestamp: string;
+}
+
 interface GameState {
-  counter_a: number;
-  counter_z: number;
-  max_value: number;
+  budget_a: number;
+  budget_z: number;
+  initial_budget: number;
+  spent_a: number;
+  spent_z: number;
+  transactions: Transaction[];
   game_over: boolean;
+  loser: string | null;
   last_updated: string;
   last_updated_by: string;
 }
@@ -26,394 +37,200 @@ export default function Main({ user, onLogout }: MainProps) {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notification, setNotification] = useState("");
-  const [notificationPermission, setNotificationPermission] = useState<
-    "granted" | "denied" | "default"
-  >(
-    ("Notification" in window ? Notification.permission : "denied") as
-      | "granted"
-      | "denied"
-      | "default"
-  );
-  const lastSeenUpdateRef = useRef<string>("");
+  const [toast, setToast] = useState("");
+  const [resetBudget, setResetBudget] = useState("");
+  const [showOverlay, setShowOverlay] = useState(true);
+  const lastUpdatedRef = useRef<string>("");
 
-  // Fetch game state only once on component mount
   useEffect(() => {
-    fetchGameState();
-    setupServiceWorkerListener();
-    // Request notification permission on load
-    requestNotificationPermissionWithBanner();
-
-    // Poll for updates every 1 second
-    const pollInterval = setInterval(pollGameState, 1000);
-    return () => clearInterval(pollInterval);
+    fetchState();
+    const interval = setInterval(pollState, 2000);
+    return () => clearInterval(interval);
   }, []);
 
-  const fetchGameState = async () => {
+  function authHeader() {
+    return { Authorization: `Bearer ${localStorage.getItem("token")}` };
+  }
+
+  function showToast(msg: string) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 3500);
+  }
+
+  async function fetchState() {
     try {
-      const token = localStorage.getItem("token");
-      const response = await axios.get("/api/game/state", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setGameState(response.data);
-      lastSeenUpdateRef.current = response.data.last_updated;
-      setError("");
-    } catch (err: any) {
-      setError("Failed to fetch game state");
-      console.error(err);
+      const res = await axios.get("/api/game/state", { headers: authHeader() });
+      setGameState(res.data);
+      lastUpdatedRef.current = res.data.last_updated;
+    } catch {
+      setError("Could not load game state.");
     } finally {
       setLoading(false);
     }
-  };
-
-  const pollGameState = async () => {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await axios.get("/api/game/state", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      // Check if game state has been updated
-      if (response.data.last_updated !== lastSeenUpdateRef.current) {
-        const oldState = gameState;
-        setGameState(response.data);
-        lastSeenUpdateRef.current = response.data.last_updated;
-
-        // Generate notification based on what changed
-        if (oldState) {
-          let notificationMsg = "";
-          let emoji = "😱";
-
-          if (oldState.counter_a !== response.data.counter_a) {
-            const isIncrement = response.data.counter_a > oldState.counter_a;
-            const updatedBy =
-              response.data.last_updated_by === "A"
-                ? "User A"
-                : response.data.last_updated_by === "Z"
-                ? "User Z"
-                : "🔧 Admin";
-            emoji = isIncrement ? "📈" : "📉";
-            notificationMsg = `${emoji} ${updatedBy} changed A to ${response.data.counter_a}`;
-          } else if (oldState.counter_z !== response.data.counter_z) {
-            const isIncrement = response.data.counter_z > oldState.counter_z;
-            const updatedBy =
-              response.data.last_updated_by === "A"
-                ? "User A"
-                : response.data.last_updated_by === "Z"
-                ? "User Z"
-                : "🔧 Admin";
-            emoji = isIncrement ? "📈" : "📉";
-            notificationMsg = `${emoji} ${updatedBy} changed Z to ${response.data.counter_z}`;
-          }
-
-          if (response.data.game_over && !oldState.game_over) {
-            emoji = "🎮";
-            notificationMsg = `${emoji} GAME OVER!`;
-          }
-
-          if (notificationMsg) {
-            // Show in-app notification
-            setNotification(notificationMsg);
-            setTimeout(() => setNotification(""), 3000);
-
-            // Show browser notification with emoji
-            if (Notification.permission === "granted") {
-              if (
-                "serviceWorker" in navigator &&
-                navigator.serviceWorker.controller
-              ) {
-                navigator.serviceWorker.controller.postMessage({
-                  type: "SHOW_NOTIFICATION",
-                  title: emoji + " Counter Tracker",
-                  options: {
-                    body: notificationMsg,
-                    icon: "/favicon.svg",
-                    badge: emoji,
-                    tag: "counter-update",
-                    requireInteraction: false,
-                  },
-                });
-              } else {
-                // Fallback to native notification
-                new Notification(emoji + " Counter Tracker", {
-                  body: notificationMsg,
-                  icon: "/favicon.svg",
-                });
-              }
-            }
-          }
-        }
-      }
-    } catch (err: any) {
-      // Silently handle polling errors to avoid spam
-      console.error("Poll error:", err);
-    }
-  };
-
-  const requestNotificationPermissionWithBanner = async () => {
-    // Check if notifications are supported
-    if (!("Notification" in window)) {
-      console.log("❌ Browser does not support notifications");
-      setError("Your browser does not support notifications");
-      return;
-    }
-
-    console.log("🔔 Current notification permission:", Notification.permission);
-    console.log("🌐 Current protocol:", window.location.protocol);
-    console.log("🌐 Current hostname:", window.location.hostname);
-    console.log("🔒 Is secure context:", window.isSecureContext);
-
-    // If already granted, show confirmation
-    if (Notification.permission === "granted") {
-      console.log("✅ Notifications already enabled");
-      setNotificationPermission("granted");
-      // Show confirmation notification
-      if ("serviceWorker" in navigator && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({
-          type: "SHOW_NOTIFICATION",
-          title: "✅ Notifications Active",
-          options: {
-            body: "You'll receive updates for counter changes!",
-            icon: "/favicon.svg",
-            tag: "notif-active",
-          },
-        });
-      }
-      return;
-    }
-
-    // If already denied, show message
-    if (Notification.permission === "denied") {
-      console.log("❌ Notifications denied by user");
-      setNotificationPermission("denied");
-
-      // Check if running on HTTPS or localhost
-      const isSecure =
-        window.location.protocol === "https:" ||
-        window.location.hostname === "localhost" ||
-        window.location.hostname === "127.0.0.1";
-      const domain = window.location.hostname;
-
-      let errorMsg = "Notifications are disabled. ";
-      if (!isSecure && !domain.includes(".local")) {
-        errorMsg +=
-          "For notifications to work, use HTTPS or access via localhost/raspberrypi.local";
-      } else {
-        errorMsg +=
-          "Go to Settings → Safari → " + domain + " → Notifications → Allow";
-      }
-
-      setError(errorMsg);
-      return;
-    }
-
-    // Request permission (default state)
-    console.log("📢 Requesting notification permission...");
-    try {
-      const permission = await Notification.requestPermission();
-      console.log("🎯 Notification permission result:", permission);
-      setNotificationPermission(permission as "granted" | "denied" | "default");
-
-      if (permission === "granted") {
-        console.log("✅ Notifications enabled!");
-        setError("");
-        // Show test notification via service worker
-        if (
-          "serviceWorker" in navigator &&
-          navigator.serviceWorker.controller
-        ) {
-          navigator.serviceWorker.controller.postMessage({
-            type: "SHOW_NOTIFICATION",
-            title: "🎉 Notifications Enabled",
-            options: {
-              body: "You'll now receive notifications for counter changes!",
-              icon: "/favicon.svg",
-              tag: "notif-enabled",
-            },
-          });
-        } else {
-          // Fallback if service worker not available
-          new Notification("🎉 Notifications Enabled", {
-            body: "You'll now receive notifications for counter changes!",
-          });
-        }
-      } else if (permission === "denied") {
-        setError(
-          "Notifications denied. You won't receive alerts for counter changes."
-        );
-      }
-    } catch (err) {
-      console.error("❌ Error requesting notification permission:", err);
-      setError("Could not request notification permission");
-    }
-  };
-
-  const setupServiceWorkerListener = () => {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.addEventListener("message", (event) => {
-        if (event.data.type === "STATE_UPDATE") {
-          const newState = event.data.payload;
-
-          // Send token to service worker if requested
-          if (event.data.type === "GET_TOKEN") {
-            const token = localStorage.getItem("token");
-            event.ports[0].postMessage({ type: "TOKEN_RESPONSE", token });
-          }
-
-          // Update game state from service worker
-          setGameState(newState);
-          lastSeenUpdateRef.current = newState.last_updated;
-        }
-      });
-
-      // Register for background sync (Android PWA only)
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.ready.then((registration: any) => {
-          if (
-            registration.sync &&
-            typeof registration.sync.register === "function"
-          ) {
-            registration.sync.register("check-notifications").catch(() => {
-              // Background sync not supported, polling will handle it
-            });
-          }
-        });
-      }
-    }
-  };
-
-  const handleCounterChange = async (delta: number, counter?: string) => {
-    if (!gameState) return;
-
-    try {
-      const token = localStorage.getItem("token");
-      const payload: any = { delta };
-
-      // Include counter field for admin
-      if (user.role === "admin" && counter) {
-        payload.counter = counter;
-      }
-
-      const response = await axios.post("/api/game/update", payload, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setGameState(response.data.state);
-      lastSeenUpdateRef.current = response.data.state.last_updated;
-
-      if (response.data.notification) {
-        setNotification(response.data.notification);
-        setTimeout(() => setNotification(""), 3000);
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Update failed");
-    }
-  };
-
-  const handleReset = async () => {
-    if (user.role !== "admin") {
-      setError("Only admin can reset the game");
-      return;
-    }
-
-    try {
-      const token = localStorage.getItem("token");
-      const response = await axios.post(
-        "/api/game/reset",
-        {},
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      setGameState(response.data);
-      lastSeenUpdateRef.current = response.data.last_updated;
-      setNotification("🔄 Game reset by admin");
-      setTimeout(() => setNotification(""), 3000);
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "Reset failed");
-    }
-  };
-
-  const handleLogout = () => {
-    onLogout();
-  };
-
-  if (loading) {
-    return <div className="main-loading">Loading game state...</div>;
   }
 
-  if (!gameState) {
-    return <div className="main-error">Failed to load game</div>;
+  async function pollState() {
+    try {
+      const res = await axios.get("/api/game/state", { headers: authHeader() });
+      if (res.data.last_updated !== lastUpdatedRef.current) {
+        setGameState((prev) => {
+          if (!prev?.game_over && res.data.game_over) setShowOverlay(true);
+          return res.data;
+        });
+        lastUpdatedRef.current = res.data.last_updated;
+      }
+    } catch {
+      // silently ignore poll errors
+    }
   }
 
-  const percentageA = (gameState.counter_a / gameState.max_value) * 100;
-  const percentageZ = (gameState.counter_z / gameState.max_value) * 100;
+  async function handleSpend(amount: number, description: string) {
+    const res = await axios.post("/api/game/spend", { amount, description }, { headers: authHeader() });
+    setGameState(res.data.state);
+    lastUpdatedRef.current = res.data.state.last_updated;
+    showToast(`-$${amount.toFixed(2)} · ${description}`);
+  }
+
+  async function handleAdminSpend(player: "A" | "Z", amount: number, description: string) {
+    const res = await axios.post(
+      "/api/game/spend",
+      { amount, description, player },
+      { headers: authHeader() }
+    );
+    setGameState(res.data.state);
+    lastUpdatedRef.current = res.data.state.last_updated;
+    showToast(`Admin — Partner ${player}: -$${amount.toFixed(2)} · ${description}`);
+  }
+
+  async function handleReset() {
+    const budget = parseFloat(resetBudget);
+    const payload: any = {};
+    if (!isNaN(budget) && budget > 0) payload.budget = budget;
+
+    const res = await axios.post("/api/game/reset", payload, { headers: authHeader() });
+    setGameState(res.data);
+    lastUpdatedRef.current = res.data.last_updated;
+    setResetBudget("");
+    setShowOverlay(true);
+    showToast("New round started.");
+  }
+
+  if (loading) return <div className="main-loading">Loading...</div>;
+  if (!gameState) return <div className="main-error">Failed to load game.</div>;
+
+  const { budget_a, budget_z, initial_budget, spent_a, spent_z, transactions, game_over, loser } =
+    gameState;
+
+  const totalSpent = spent_a + spent_z;
+  const totalBudget = initial_budget * 2;
+  const overallPercent = totalBudget > 0 ? (totalSpent / totalBudget) * 100 : 0;
 
   return (
-    <div className="main-container">
-      <div className="header">
-        <h1>Counter Tracker</h1>
-        <div className="user-info">
-          <span>
-            User: <strong>{user.role.toUpperCase()}</strong>
-          </span>
-          {notificationPermission !== "granted" && (
-            <button
-              onClick={requestNotificationPermissionWithBanner}
-              className="notification-btn"
-              title={
-                notificationPermission === "denied"
-                  ? "Notifications disabled"
-                  : "Enable notifications"
-              }
-            >
-              🔔{" "}
-              {notificationPermission === "denied"
-                ? "Notifications Off"
-                : "Enable Notifications"}
-            </button>
-          )}
-          <button onClick={handleLogout} className="logout-btn">
-            Logout
-          </button>
+    <div className="main">
+      <header className="main-header">
+        <div className="header-title">
+          <span className="app-name">Budget Craving</span>
+          <span className="round-badge">${initial_budget.toFixed(0)} / each</span>
+        </div>
+        <div className="header-actions">
+          <span className="logged-in-as">Partner {user.role !== "admin" ? user.role : "Admin"}</span>
+          <button className="logout-btn" onClick={onLogout}>Logout</button>
+        </div>
+      </header>
+
+      {toast && <div className="toast">{toast}</div>}
+      {error && <div className="error-bar">{error}</div>}
+
+      <div className="overall-section">
+        <div className="overall-bar-wrap">
+          <div className="overall-bar">
+            <div className="overall-fill" style={{ width: `${overallPercent}%` }} />
+          </div>
+          <div className="overall-labels">
+            <span>Combined: ${totalSpent.toFixed(2)} spent</span>
+            <span>${(totalBudget - totalSpent).toFixed(2)} remaining</span>
+          </div>
         </div>
       </div>
 
-      {error && <div className="error-banner">{error}</div>}
-      {notification && (
-        <div className="notification-banner">{notification}</div>
-      )}
-
-      {gameState.game_over && (
-        <div className="game-over-banner">🎮 GAME OVER!</div>
-      )}
-
-      <div className="counters-grid">
-        <Counter
-          label="A"
-          value={gameState.counter_a}
-          maxValue={gameState.max_value}
-          percentage={percentageA}
-          canChange={user.role === "A" || user.role === "admin"}
-          disabled={gameState.game_over}
-          onIncrement={() => handleCounterChange(1, "a")}
-          onDecrement={() => handleCounterChange(-1, "a")}
+      <div className="cards-grid">
+        <SpendCard
+          player="A"
+          budget={budget_a}
+          initialBudget={initial_budget}
+          spent={spent_a}
+          transactions={transactions}
+          canSpend={user.role === "A" || user.role === "admin"}
+          disabled={game_over}
+          onSpend={user.role === "admin" ? (a, d) => handleAdminSpend("A", a, d) : handleSpend}
         />
-
-        <Counter
-          label="Z"
-          value={gameState.counter_z}
-          maxValue={gameState.max_value}
-          percentage={percentageZ}
-          canChange={user.role === "Z" || user.role === "admin"}
-          disabled={gameState.game_over}
-          onIncrement={() => handleCounterChange(1, "z")}
-          onDecrement={() => handleCounterChange(-1, "z")}
+        <SpendCard
+          player="Z"
+          budget={budget_z}
+          initialBudget={initial_budget}
+          spent={spent_z}
+          transactions={transactions}
+          canSpend={user.role === "Z" || user.role === "admin"}
+          disabled={game_over}
+          onSpend={user.role === "admin" ? (a, d) => handleAdminSpend("Z", a, d) : handleSpend}
         />
       </div>
 
       {user.role === "admin" && (
-        <div className="admin-controls">
-          <button onClick={handleReset} className="reset-btn">
-            Reset Game
-          </button>
+        <div className="admin-bar">
+          <input
+            className="budget-input"
+            type="number"
+            placeholder={`Budget (default $${initial_budget})`}
+            value={resetBudget}
+            onChange={(e) => setResetBudget(e.target.value)}
+            min="1"
+            step="1"
+          />
+          <button className="reset-btn" onClick={handleReset}>New Round</button>
+        </div>
+      )}
+
+      {game_over && showOverlay && (
+        <div className="game-over-overlay">
+          <div className="game-over-card">
+            <button className="overlay-close-btn" onClick={() => setShowOverlay(false)} aria-label="Close">
+              ✕
+            </button>
+
+            <div className="game-over-title">
+              {loser === "tie" ? "It's a tie!" : `Partner ${loser} ran out first!`}
+            </div>
+            <p className="game-over-subtitle">
+              {loser === "tie"
+                ? "Both of you crave equally — impressive."
+                : `Partner ${loser} is more craving.`}
+            </p>
+
+            <div className="game-over-stats">
+              <div className="stat player-a-stat">
+                <span className="stat-label">Partner A</span>
+                <span className="stat-amount">${spent_a.toFixed(2)}</span>
+                {loser === "A" && <span className="loser-tag">More Craving</span>}
+                {loser === "Z" && <span className="winner-tag">Winner</span>}
+              </div>
+              <div className="stat-divider">vs</div>
+              <div className="stat player-z-stat">
+                <span className="stat-label">Partner Z</span>
+                <span className="stat-amount">${spent_z.toFixed(2)}</span>
+                {loser === "Z" && <span className="loser-tag">More Craving</span>}
+                {loser === "A" && <span className="winner-tag">Winner</span>}
+              </div>
+            </div>
+
+            {user.role === "admin" && (
+              <button className="new-round-btn" onClick={handleReset}>
+                Start New Round
+              </button>
+            )}
+
+            <button className="overlay-logout-btn" onClick={onLogout}>Logout</button>
+          </div>
         </div>
       )}
     </div>

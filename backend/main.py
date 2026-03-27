@@ -1,12 +1,17 @@
 """
-Counter Tracker API - Enhanced Backend with State Management
+Budget Craving — shared budget tracking game for couples.
+
+Each partner gets the same starting budget and logs what they spend.
+Whoever runs out of their budget first is "more craving" and loses.
+Admin can configure the budget and reset the game at any time.
 """
 from fastapi import FastAPI, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi import APIRouter
 from pydantic import BaseModel
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 import jwt
 import os
 import logging
@@ -20,19 +25,12 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-load_dotenv()
-
 app = FastAPI(
-    title="Counter Tracker API",
-    description="Real-time counter tracking with notifications",
-    version="1.0.0"
+    title="Budget Craving API",
+    description="Per-player budget tracking game — whoever spends their budget first loses",
+    version="2.0.0",
 )
 
-# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -41,318 +39,289 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Import APIRouter for organizing endpoints
-from fastapi import APIRouter
 api_router = APIRouter(prefix="/api")
 
-# Configuration
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+# --- Configuration ---
 
-# Load user credentials from environment
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
+ALGORITHM = "HS256"
+TOKEN_EXPIRE_MINUTES = 30
+DEFAULT_BUDGET = float(os.getenv("DEFAULT_BUDGET", "500"))
+
 USERS = {
     "A": {"password": os.getenv("USER_A_PASSWORD", "password"), "role": "A"},
     "Z": {"password": os.getenv("USER_Z_PASSWORD", "password"), "role": "Z"},
-    "admin": {"password": os.getenv("ADMIN_PASSWORD", "password"), "role": "admin"}
+    "admin": {"password": os.getenv("ADMIN_PASSWORD", "password"), "role": "admin"},
 }
+
+
+# --- Data models ---
+
+class Transaction(BaseModel):
+    player: str       # "A" or "Z"
+    amount: float
+    description: str  # what they craved
+    timestamp: str
+
+
 class GameState(BaseModel):
-    counter_a: int
-    counter_z: int
-    max_value: int = 100
+    # Each player has their own independent budget
+    budget_a: float
+    budget_z: float
+    initial_budget: float    # same starting amount for both players
+    spent_a: float = 0.0
+    spent_z: float = 0.0
+    transactions: List[Transaction] = []
     game_over: bool = False
+    loser: Optional[str] = None   # "A", "Z", or "tie" — who ran out first
     last_updated: Optional[str] = None
     last_updated_by: Optional[str] = None
 
-# File-based persistence
-STATE_FILE = Path("game_state.json")
 
-def load_game_state():
-    """Load game state from file or create new"""
-    if STATE_FILE.exists():
-        try:
-            with open(STATE_FILE, 'r') as f:
-                data = json.load(f)
-                return GameState(**data)
-        except Exception as e:
-            logger.error(f"Error loading state: {e}")
-            return get_default_state()
-    return get_default_state()
-
-def get_default_state():
-    """Get default game state"""
-    return GameState(
-        counter_a=100,
-        counter_z=100,
-        max_value=100,
-        game_over=False,
-        last_updated=datetime.utcnow().isoformat(),
-        last_updated_by=None
-    )
-
-def save_game_state(state: GameState):
-    """Save game state to file"""
-    try:
-        with open(STATE_FILE, 'w') as f:
-            json.dump(state.dict(), f)
-        logger.info(f"Game state saved: A={state.counter_a}, Z={state.counter_z}")
-    except Exception as e:
-        logger.error(f"Error saving state: {e}")
-
-# Load initial game state
-game_state = load_game_state()
-
-# Schemas
 class LoginRequest(BaseModel):
     username: str
     password: str
 
-class LoginResponse(BaseModel):
-    user: dict
-    token: str
 
-class UpdateRequest(BaseModel):
-    delta: int
-    counter: Optional[str] = None  # For admin: 'a' or 'z', optional for A/Z users
+class SpendRequest(BaseModel):
+    amount: float
+    description: str
+    player: Optional[str] = None  # admin only: "A" or "Z"
 
-class GameResponse(BaseModel):
-    state: GameState
-    notification: Optional[str] = None
-    timestamp: str
 
-# JWT Token Functions
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+class ResetRequest(BaseModel):
+    budget: Optional[float] = None  # admin can override the starting budget
 
-def verify_token(token: str):
+
+# --- State persistence ---
+
+STATE_FILE = Path("game_state.json")
+
+
+def load_game_state() -> GameState:
+    if STATE_FILE.exists():
+        try:
+            with open(STATE_FILE, "r") as f:
+                data = json.load(f)
+                return GameState(**data)
+        except Exception as e:
+            logger.warning(f"Could not load game_state.json, starting fresh: {e}")
+    return _default_state()
+
+
+def _default_state() -> GameState:
+    return GameState(
+        budget_a=DEFAULT_BUDGET,
+        budget_z=DEFAULT_BUDGET,
+        initial_budget=DEFAULT_BUDGET,
+        last_updated=datetime.utcnow().isoformat(),
+    )
+
+
+def save_game_state(state: GameState) -> None:
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(state.dict(), f, indent=2)
+        logger.info(
+            f"State saved — A: ${state.budget_a:.2f} remaining, "
+            f"Z: ${state.budget_z:.2f} remaining"
+        )
+    except Exception as e:
+        logger.error(f"Failed to persist game state: {e}")
+
+
+game_state = load_game_state()
+
+
+# --- Auth helpers ---
+
+def create_token(username: str) -> str:
+    payload = {
+        "sub": username,
+        "exp": datetime.utcnow() + timedelta(minutes=TOKEN_EXPIRE_MINUTES),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_token(token: str) -> str:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
+        username = payload.get("sub")
+        if not username:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
         return username
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-def get_current_user(authorization: Optional[str] = None):
+
+def current_user(authorization: Optional[str] = None) -> dict:
     if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No authorization header"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header missing")
     try:
         scheme, token = authorization.split()
         if scheme.lower() != "bearer":
             raise ValueError("Invalid scheme")
     except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header"
-        )
-    
-    username = verify_token(token)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Expected 'Bearer <token>'")
+
+    username = decode_token(token)
     if username not in USERS:
         raise HTTPException(status_code=401, detail="User not found")
-    
-    return {
-        "id": username,
-        "role": USERS[username]["role"]
-    }
 
-# Routes
+    return {"id": username, "role": USERS[username]["role"]}
+
+
+# --- Endpoints ---
+
 @api_router.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+async def health():
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
-@api_router.post("/auth/login", response_model=LoginResponse)
-async def login(request: LoginRequest):
-    """User login endpoint"""
-    user = USERS.get(request.username)
-    if not user or user["password"] != request.password:
-        logger.warning(f"Failed login attempt for user: {request.username}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password"
-        )
-    
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": request.username},
-        expires_delta=access_token_expires
-    )
-    
-    logger.info(f"User {request.username} logged in")
+
+@api_router.post("/auth/login")
+async def login(req: LoginRequest):
+    user = USERS.get(req.username)
+    if not user or user["password"] != req.password:
+        logger.warning(f"Failed login attempt for username: '{req.username}'")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
+
+    logger.info(f"User '{req.username}' logged in")
     return {
-        "user": {
-            "id": request.username,
-            "role": user["role"]
-        },
-        "token": access_token
+        "user": {"id": req.username, "role": user["role"]},
+        "token": create_token(req.username),
     }
+
 
 @api_router.get("/auth/me")
-async def get_me(authorization: str = Header(None)):
-    user = get_current_user(authorization)
-    return user
+async def me(authorization: str = Header(None)):
+    return current_user(authorization)
+
 
 @api_router.get("/game/state", response_model=GameState)
-async def get_game_state(authorization: str = Header(None)):
-    user = get_current_user(authorization)
+async def get_state(authorization: str = Header(None)):
+    current_user(authorization)
     return game_state
 
-@api_router.post("/game/update", response_model=GameResponse)
-async def update_game(request: UpdateRequest, authorization: str = Header(None)):
-    """Update counter based on user role"""
+
+@api_router.post("/game/spend")
+async def spend(req: SpendRequest, authorization: str = Header(None)):
     global game_state
-    
-    user = get_current_user(authorization)
-    
-    # Validate delta
-    if request.delta == 0:
-        raise HTTPException(status_code=400, detail="Delta cannot be zero")
-    
-    # Determine which counter to update based on user role
-    if user["role"] not in ["A", "Z", "admin"]:
-        raise HTTPException(status_code=403, detail="Invalid role")
-    
-    notification = None
-    old_state_a = game_state.counter_a
-    old_state_z = game_state.counter_z
-    
-    try:
-        if user["role"] == "A":
-            # User A can only modify counter A
-            new_value = game_state.counter_a + request.delta
-            new_value = max(0, min(new_value, game_state.max_value))
-            game_state.counter_a = new_value
-            
-            if new_value == 0 and old_state_a > 0:
-                game_state.game_over = True
-                notification = "🎮 User A is done! Game Over!"
-            else:
-                notification = f"👤 User A changed counter to {new_value}"
-                
-        elif user["role"] == "Z":
-            # User Z can only modify counter Z
-            new_value = game_state.counter_z + request.delta
-            new_value = max(0, min(new_value, game_state.max_value))
-            game_state.counter_z = new_value
-            
-            if new_value == 0 and old_state_z > 0:
-                game_state.game_over = True
-                notification = "🎮 User Z is done! Game Over!"
-            else:
-                notification = f"👤 User Z changed counter to {new_value}"
-                
-        elif user["role"] == "admin":
-            # Admin can modify both counters - use 'counter' parameter or last action hint
-            # If counter parameter provided, use it; otherwise determine by increment/decrement pattern
-            counter_to_update = request.counter.lower() if request.counter else "a"
-            
-            if counter_to_update == "z":
-                # Update counter Z
-                new_value = game_state.counter_z + request.delta
-                new_value = max(0, min(new_value, game_state.max_value))
-                game_state.counter_z = new_value
-                notification = f"🔧 Admin updated counter Z to {new_value}"
-            else:
-                # Default to counter A
-                new_value = game_state.counter_a + request.delta
-                new_value = max(0, min(new_value, game_state.max_value))
-                game_state.counter_a = new_value
-                notification = f"🔧 Admin updated counter A to {new_value}"
-        
-        # Update timestamp and save to file
-        game_state.last_updated = datetime.utcnow().isoformat()
-        game_state.last_updated_by = user["id"]
-        save_game_state(game_state)
-        
-        logger.info(f"Game updated by {user['id']}: delta={request.delta}, A={game_state.counter_a}, Z={game_state.counter_z}")
-        
-    except Exception as e:
-        logger.error(f"Error updating game: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-    
-    return GameResponse(
-        state=game_state,
-        notification=notification,
-        timestamp=datetime.utcnow().isoformat()
+
+    user = current_user(authorization)
+
+    if game_state.game_over:
+        raise HTTPException(status_code=400, detail="Game is over. Ask admin to start a new round.")
+
+    if req.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than zero.")
+
+    if not req.description.strip():
+        raise HTTPException(status_code=400, detail="Description cannot be empty.")
+
+    # Determine which player is spending
+    if user["role"] == "admin":
+        player = (req.player or "A").upper()
+        if player not in ("A", "Z"):
+            raise HTTPException(status_code=400, detail="player must be 'A' or 'Z'.")
+    elif user["role"] in ("A", "Z"):
+        player = user["role"]
+    else:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions.")
+
+    # Validate against the player's own budget
+    player_budget = game_state.budget_a if player == "A" else game_state.budget_z
+    if req.amount > player_budget:
+        raise HTTPException(
+            status_code=400,
+            detail=f"${req.amount:.2f} exceeds your remaining budget of ${player_budget:.2f}.",
+        )
+
+    # Apply spend to the correct player's budget
+    if player == "A":
+        game_state.budget_a = round(game_state.budget_a - req.amount, 2)
+        game_state.spent_a = round(game_state.spent_a + req.amount, 2)
+    else:
+        game_state.budget_z = round(game_state.budget_z - req.amount, 2)
+        game_state.spent_z = round(game_state.spent_z + req.amount, 2)
+
+    game_state.transactions.append(Transaction(
+        player=player,
+        amount=req.amount,
+        description=req.description.strip(),
+        timestamp=datetime.utcnow().isoformat(),
+    ))
+
+    # Check game-over: whoever hits zero first loses
+    a_done = game_state.budget_a <= 0
+    z_done = game_state.budget_z <= 0
+
+    if a_done or z_done:
+        game_state.game_over = True
+        if a_done and z_done:
+            game_state.loser = "tie"
+        elif a_done:
+            game_state.loser = "A"
+        else:
+            game_state.loser = "Z"
+        logger.info(f"Game over — loser: {game_state.loser}")
+
+    game_state.last_updated = datetime.utcnow().isoformat()
+    game_state.last_updated_by = user["id"]
+
+    save_game_state(game_state)
+
+    logger.info(
+        f"Spend — player={player}, amount=${req.amount:.2f}, "
+        f"item='{req.description}', budget_a=${game_state.budget_a:.2f}, "
+        f"budget_z=${game_state.budget_z:.2f}"
     )
+
+    return {"state": game_state, "timestamp": datetime.utcnow().isoformat()}
+
 
 @api_router.post("/game/reset", response_model=GameState)
-async def reset_game(authorization: str = Header(None)):
-    """Reset game state (admin only)"""
+async def reset(req: ResetRequest = ResetRequest(), authorization: str = Header(None)):
     global game_state
-    
-    user = get_current_user(authorization)
-    
+
+    user = current_user(authorization)
     if user["role"] != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin can reset the game"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admin can reset the game.")
+
+    new_budget = req.budget if (req.budget and req.budget > 0) else DEFAULT_BUDGET
     game_state = GameState(
-        counter_a=100,
-        counter_z=100,
-        max_value=100,
-        game_over=False,
+        budget_a=new_budget,
+        budget_z=new_budget,
+        initial_budget=new_budget,
         last_updated=datetime.utcnow().isoformat(),
-        last_updated_by=user["id"]
+        last_updated_by=user["id"],
     )
-    
-    # Save to file
     save_game_state(game_state)
-    logger.info(f"Game reset by admin {user['id']}")
+    logger.info(f"Game reset by admin '{user['id']}'. Starting budget: ${new_budget:.2f} per player")
     return game_state
 
-# Include API router BEFORE mounting static files
+
+# Mount frontend static files — must come after API routes
 app.include_router(api_router)
 
-# Mount frontend static files (must be last)
-frontend_dist_path = Path(__file__).parent.parent / "frontend" / "dist"
-if frontend_dist_path.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_dist_path), html=True), name="frontend")
-    logger.info(f"Frontend mounted from {frontend_dist_path}")
+frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+    logger.info(f"Serving frontend from {frontend_dist}")
 else:
-    logger.warning(f"Frontend dist folder not found at {frontend_dist_path}")
+    logger.warning("Frontend dist not found — run 'npm run build' inside frontend/")
+
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # Check if SSL certificates exist for HTTPS
-    cert_path = Path(__file__).parent / "cert.pem"
-    key_path = Path(__file__).parent / "key.pem"
-    
-    use_https = cert_path.exists() and key_path.exists()
-    
-    if use_https:
-        logger.info("🔒 Starting server with HTTPS (SSL/TLS)")
-        uvicorn.run(
-            app,
-            host="0.0.0.0",
-            port=8000,
-            log_level="info",
-            ssl_certfile=str(cert_path),
-            ssl_keyfile=str(key_path)
-        )
+
+    cert = Path(__file__).parent / "cert.pem"
+    key = Path(__file__).parent / "key.pem"
+
+    if cert.exists() and key.exists():
+        logger.info("Starting with HTTPS (certificates found)")
+        uvicorn.run(app, host="0.0.0.0", port=8000, ssl_certfile=str(cert), ssl_keyfile=str(key))
     else:
-        logger.warning("⚠️ No SSL certificates found. Starting with HTTP (insecure)")
-        logger.info("To enable HTTPS, create SSL certificates:")
-        logger.info("  openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365")
-        uvicorn.run(
-            app,
-            host="0.0.0.0",
-            port=8000,
-            log_level="info"
-        )
+        logger.info("Starting with HTTP (no certificates found)")
+        uvicorn.run(app, host="0.0.0.0", port=8000)

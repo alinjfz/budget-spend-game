@@ -36,7 +36,7 @@ export default function Login({ onLogin }: LoginProps) {
   return (
     <div className="login-container">
       <div className="login-card">
-        <h1>Counter Tracker</h1>
+        <h1>Budget Craving</h1>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label htmlFor="username">Username</label>
