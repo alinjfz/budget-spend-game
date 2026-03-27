@@ -1,36 +1,31 @@
 #!/bin/bash
-
-# Counter Tracker App - Production Startup Script
-# Run this script on Raspberry Pi to start the application
+# Craving Duel — startup script for Raspberry Pi
+# Starts the FastAPI backend. Run once after cloning and setting up .env
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
-FRONTEND_DIR="$SCRIPT_DIR/frontend"
 
-echo "🚀 Counter Tracker - Starting Application"
-echo "📁 Project directory: $SCRIPT_DIR"
-
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Check if backend is already running
+echo "Starting Craving Duel..."
+
+# Stop any running instance
 if [ -f "$BACKEND_DIR/.pid" ]; then
     OLD_PID=$(cat "$BACKEND_DIR/.pid")
     if ps -p "$OLD_PID" > /dev/null 2>&1; then
-        echo -e "${YELLOW}⚠️  Backend already running (PID: $OLD_PID)${NC}"
-        echo "Stopping old process..."
+        echo "Stopping existing process (PID: $OLD_PID)..."
         kill "$OLD_PID" 2>/dev/null || true
         sleep 1
     fi
+    rm -f "$BACKEND_DIR/.pid"
 fi
 
-# Setup backend
-echo -e "${GREEN}📦 Setting up backend...${NC}"
+# Python virtual environment
 cd "$BACKEND_DIR"
 
 if [ ! -d "venv" ]; then
@@ -39,55 +34,59 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
+pip install -q -r requirements.txt
 
-# Install dependencies
-if [ -f "requirements.txt" ]; then
-    pip install -q -r requirements.txt
+# Auto-generate TLS certificates if they don't exist.
+# This enables HTTPS which is required for full PWA support
+# (push notifications, service worker on non-localhost).
+if [ ! -f "$BACKEND_DIR/cert.pem" ] || [ ! -f "$BACKEND_DIR/key.pem" ]; then
+    echo "Generating self-signed TLS certificate..."
+    openssl req -x509 -newkey rsa:4096 -nodes \
+        -out "$BACKEND_DIR/cert.pem" \
+        -keyout "$BACKEND_DIR/key.pem" \
+        -days 365 \
+        -subj "/CN=raspberrypi.local" \
+        -addext "subjectAltName=DNS:raspberrypi.local,DNS:localhost,IP:127.0.0.1" \
+        2>/dev/null
+    echo -e "${GREEN}Certificate generated (valid 365 days)${NC}"
+else
+    echo "Using existing TLS certificate"
 fi
 
 # Start backend
-echo -e "${GREEN}🌍 Starting backend on port 8000...${NC}"
+echo "Starting backend on port 8000..."
 nohup python3 main.py > backend.log 2>&1 &
 BACKEND_PID=$!
 echo $BACKEND_PID > .pid
 
-echo -e "${GREEN}✅ Backend started (PID: $BACKEND_PID)${NC}"
-echo "📝 Backend logs: $BACKEND_DIR/backend.log"
-
-# Give backend time to start
 sleep 2
 
-# Test backend (try HTTPS first, then HTTP)
+# Health check
 if curl -s --insecure https://localhost:8000/api/health > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ Backend health check passed (HTTPS)${NC}"
     PROTOCOL="https"
 elif curl -s http://localhost:8000/api/health > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ Backend health check passed (HTTP)${NC}"
     PROTOCOL="http"
 else
-    echo -e "${RED}❌ Backend health check failed${NC}"
-    echo "Check logs: cat $BACKEND_DIR/backend.log"
+    echo -e "${RED}Backend failed to start. Check: cat $BACKEND_DIR/backend.log${NC}"
     exit 1
 fi
 
-# Display network access info
+PI_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "YOUR_IP")
+
 echo ""
-echo -e "${GREEN}🎉 Application Ready!${NC}"
+echo -e "${GREEN}Ready.${NC}"
 echo ""
-echo "📱 Access from your network:"
-PI_IP=$(hostname -I | awk '{print $1}' 2>/dev/null || echo "YOUR_IP")
+echo "  $PROTOCOL://$PI_IP:8000"
+echo "  $PROTOCOL://raspberrypi.local:8000"
+echo ""
+
 if [ "$PROTOCOL" = "https" ]; then
-    echo -e "  ${YELLOW}https://$PI_IP:8000${NC} (⚠️ self-signed certificate)"
-    echo -e "  ${YELLOW}https://raspberrypi.local:8000${NC} (⚠️ self-signed certificate)"
+    echo -e "${YELLOW}Note: Browser will warn about the self-signed certificate.${NC}"
+    echo "  Tap 'Advanced -> Proceed' once to accept it."
     echo ""
-    echo "🔒 HTTPS is enabled (secure PWA with notifications)"
-else
-    echo -e "  ${YELLOW}http://$PI_IP:8000${NC}"
-    echo -e "  ${YELLOW}http://raspberrypi.local:8000${NC}"
 fi
-echo ""
-echo "🔐 Login with credentials from backend/.env"
-echo ""
-echo "To stop: kill $BACKEND_PID"
-echo "To view logs: tail -f $BACKEND_DIR/backend.log"
+
+echo "  Credentials: see backend/.env"
+echo "  Logs:        tail -f $BACKEND_DIR/backend.log"
+echo "  Stop:        kill $BACKEND_PID"
 echo ""
