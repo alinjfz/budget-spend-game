@@ -1,4 +1,4 @@
-# Budget Craving
+# Craving Duel
 
 A real-time shared budget game for two players — built as a full-stack web application deployable on a **Raspberry Pi** or any server.
 

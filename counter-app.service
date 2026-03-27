@@ -1,5 +1,5 @@
 [Unit]
-Description=Counter Tracker — real-time counter tracking app
+Description=Craving Duel — real-time couples budget game
 Documentation=https://github.com/yourusername/counter-tracker
 After=network.target
 
